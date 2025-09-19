@@ -1,0 +1,87 @@
+# backend/app/main.py
+from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel, EmailStr
+from typing import List
+import uvicorn
+import uuid
+from datetime import datetime, timedelta
+
+app = FastAPI(title="SkillExchange API")
+
+# --- In-memory stores for quick prototype (replace with DB) ---
+USERS = {}
+SESSIONS = {}
+BOOKINGS = {}
+LEDGER = {}
+
+# --- Schemas ---
+class Signup(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    college: str
+
+class UserOut(BaseModel):
+    id: str
+    name: str
+    email: EmailStr
+    college: str
+    is_verified: bool = False
+
+class SessionCreate(BaseModel):
+    host_id: str
+    skill: str
+    start_ts: datetime
+    duration_minutes: int
+    capacity: int = 1
+    price_credits: int = 10
+
+@app.post("/auth/signup", response_model=UserOut)
+def signup(payload: Signup):
+    uid = str(uuid.uuid4())
+    USERS[uid] = {
+        "id": uid,
+        "name": payload.name,
+        "email": payload.email,
+        "college": payload.college,
+        "password_hash": payload.password + "_notsecure",  # replace with bcrypt in prod
+        "is_verified": False,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    # initialize ledger
+    LEDGER[uid] = {"balance": 0}
+    return UserOut(**USERS[uid])
+
+@app.post("/sessions", status_code=201)
+def create_session(payload: SessionCreate):
+    sid = str(uuid.uuid4())
+    SESSIONS[sid] = {
+        "id": sid,
+        "host_id": payload.host_id,
+        "skill": payload.skill,
+        "start_ts": payload.start_ts.isoformat(),
+        "duration": payload.duration_minutes,
+        "capacity": payload.capacity,
+        "price_credits": payload.price_credits,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    return SESSIONS[sid]
+
+@app.post("/sessions/{session_id}/book")
+def book_session(session_id: str, user_id: str):
+    s = SESSIONS.get(session_id)
+    if not s:
+        raise HTTPException(404, "Session not found")
+    # very simple booking: reduce balance if enough credits
+    price = s["price_credits"]
+    if LEDGER.get(user_id, {}).get("balance", 0) < price:
+        raise HTTPException(402, "Insufficient credits")
+    LEDGER[user_id]["balance"] -= price
+    # hold credits in escrow (for demo we move to host immediately)
+    LEDGER[s["host_id"]]["balance"] += price
+    bid = str(uuid.uuid4())
+    BOOKINGS[bid] = {"id": bid, "session_id": session_id, "user_id": user_id, "status": "booked", "ts": datetime.utcnow().isoformat()}
+    return BOOKINGS[bid]
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
