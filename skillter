@@ -1,87 +1,81 @@
-# backend/app/main.py
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel, EmailStr
-from typing import List
-import uvicorn
+import streamlit as st
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
-app = FastAPI(title="SkillExchange API")
-
-# --- In-memory stores for quick prototype (replace with DB) ---
+# In-memory "database"
 USERS = {}
 SESSIONS = {}
-BOOKINGS = {}
 LEDGER = {}
 
-# --- Schemas ---
-class Signup(BaseModel):
-    name: str
-    email: EmailStr
-    password: str
-    college: str
+st.set_page_config(page_title="Skill Exchange", page_icon="🎓")
 
-class UserOut(BaseModel):
-    id: str
-    name: str
-    email: EmailStr
-    college: str
-    is_verified: bool = False
+st.title("🎓 Skill Exchange Prototype")
 
-class SessionCreate(BaseModel):
-    host_id: str
-    skill: str
-    start_ts: datetime
-    duration_minutes: int
-    capacity: int = 1
-    price_credits: int = 10
+# Sidebar navigation
+menu = st.sidebar.radio("Menu", ["Signup", "Create Session", "Browse Sessions", "My Wallet"])
 
-@app.post("/auth/signup", response_model=UserOut)
-def signup(payload: Signup):
-    uid = str(uuid.uuid4())
-    USERS[uid] = {
-        "id": uid,
-        "name": payload.name,
-        "email": payload.email,
-        "college": payload.college,
-        "password_hash": payload.password + "_notsecure",  # replace with bcrypt in prod
-        "is_verified": False,
-        "created_at": datetime.utcnow().isoformat()
-    }
-    # initialize ledger
-    LEDGER[uid] = {"balance": 0}
-    return UserOut(**USERS[uid])
+# --- Signup ---
+if menu == "Signup":
+    st.subheader("Student Signup")
+    name = st.text_input("Name")
+    email = st.text_input("College Email")
+    college = st.text_input("College Name")
+    if st.button("Sign up"):
+        uid = str(uuid.uuid4())[:8]
+        USERS[uid] = {"id": uid, "name": name, "email": email, "college": college}
+        LEDGER[uid] = {"balance": 50}  # give free credits
+        st.success(f"Welcome {name}! Your User ID: {uid}")
+        st.info("Note this User ID for booking sessions.")
 
-@app.post("/sessions", status_code=201)
-def create_session(payload: SessionCreate):
-    sid = str(uuid.uuid4())
-    SESSIONS[sid] = {
-        "id": sid,
-        "host_id": payload.host_id,
-        "skill": payload.skill,
-        "start_ts": payload.start_ts.isoformat(),
-        "duration": payload.duration_minutes,
-        "capacity": payload.capacity,
-        "price_credits": payload.price_credits,
-        "created_at": datetime.utcnow().isoformat()
-    }
-    return SESSIONS[sid]
+# --- Create Session ---
+elif menu == "Create Session":
+    st.subheader("Host a Skill Session")
+    host_id = st.text_input("Your User ID")
+    skill = st.text_input("Skill you want to teach")
+    start_time = st.datetime_input("Start time")
+    duration = st.number_input("Duration (minutes)", 30, 180, 60)
+    credits = st.number_input("Credits (price)", 5, 50, 10)
+    if st.button("Create Session"):
+        if host_id not in USERS:
+            st.error("Invalid User ID")
+        else:
+            sid = str(uuid.uuid4())[:6]
+            SESSIONS[sid] = {
+                "id": sid,
+                "host": USERS[host_id]["name"],
+                "host_id": host_id,
+                "skill": skill,
+                "start_time": start_time,
+                "duration": duration,
+                "credits": credits,
+            }
+            st.success(f"Session created with ID: {sid}")
 
-@app.post("/sessions/{session_id}/book")
-def book_session(session_id: str, user_id: str):
-    s = SESSIONS.get(session_id)
-    if not s:
-        raise HTTPException(404, "Session not found")
-    # very simple booking: reduce balance if enough credits
-    price = s["price_credits"]
-    if LEDGER.get(user_id, {}).get("balance", 0) < price:
-        raise HTTPException(402, "Insufficient credits")
-    LEDGER[user_id]["balance"] -= price
-    # hold credits in escrow (for demo we move to host immediately)
-    LEDGER[s["host_id"]]["balance"] += price
-    bid = str(uuid.uuid4())
-    BOOKINGS[bid] = {"id": bid, "session_id": session_id, "user_id": user_id, "status": "booked", "ts": datetime.utcnow().isoformat()}
-    return BOOKINGS[bid]
+# --- Browse Sessions ---
+elif menu == "Browse Sessions":
+    st.subheader("Available Sessions")
+    user_id = st.text_input("Enter Your User ID to Book")
+    if not SESSIONS:
+        st.info("No sessions yet. Create one!")
+    for sid, s in SESSIONS.items():
+        with st.expander(f"{s['skill']} by {s['host']} ({s['credits']} credits)"):
+            st.write(f"🕒 {s['start_time']} | {s['duration']} mins")
+            if st.button(f"Book {sid}", key=sid):
+                if user_id not in USERS:
+                    st.error("Invalid User ID")
+                elif LEDGER[user_id]["balance"] < s["credits"]:
+                    st.error("Not enough credits!")
+                else:
+                    LEDGER[user_id]["balance"] -= s["credits"]
+                    LEDGER[s["host_id"]]["balance"] += s["credits"]
+                    st.success(f"Booked {s['skill']}! {s['credits']} credits deducted.")
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# --- Wallet ---
+elif menu == "My Wallet":
+    st.subheader("Check Your Credits")
+    user_id = st.text_input("Enter Your User ID")
+    if st.button("Check Balance"):
+        if user_id in LEDGER:
+            st.info(f"Balance: {LEDGER[user_id]['balance']} credits")
+        else:
+            st.error("User not found.")
