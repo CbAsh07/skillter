@@ -27,12 +27,16 @@ if menu == "Signup":
         st.success(f"Welcome {name}! Your User ID: {uid}")
         st.info("Note this User ID for booking sessions.")
 
-# --- Create Session ---
 elif menu == "Create Session":
     st.subheader("Host a Skill Session")
     host_id = st.text_input("Your User ID")
     skill = st.text_input("Skill you want to teach")
-    start_time = st.datetime_input("Start time")
+
+    # Fixed datetime input
+    date = st.date_input("Start date")
+    time = st.time_input("Start time")
+    start_time = datetime.combine(date, time)
+
     duration = st.number_input("Duration (minutes)", 30, 180, 60)
     credits = st.number_input("Credits (price)", 5, 50, 10)
     if st.button("Create Session"):
